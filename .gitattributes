@@ -1,0 +1,2 @@
+landsat/LC81850182018132LGN00 filter=lfs diff=lfs merge=lfs -text
+landsat/LC81860182017136LGN00 filter=lfs diff=lfs merge=lfs -text
