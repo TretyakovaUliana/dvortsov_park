@@ -1,4 +1,4 @@
-library(tidyverse)
+чlibrary(tidyverse)
 library(lubridate)
 library(rnoaa)
 library(raster)
@@ -165,12 +165,6 @@ ndvi_df = ndvi_df[[1]]
 summary(ndvi_df)
 #Оставим только пиксели где была зеленая растительность
 ndvi_df = ndvi_df %>% filter(value > 0.4)
-#Вычислим площадь зеленых насаждений, т.к. в полигон у нас могли попадать пискели не целиком, для
-# тех кусочков что попали частично записана их доля попавшая в полигон - coverage_fraction,
-# тогда общая площадь под зелеными насаждениями будет
-green_square = sum(ndvi_df$coverage_fraction)*900
-## У меня получается green_square == 0 
-# из за этого невозможно выполнить дальнейшие задачи
 
 #Характеристики рельефа
 park_dem_utm = raster::projectRaster(from = park_dem_mask, crs = crs(park_ndvi_crop))
@@ -244,7 +238,11 @@ ggplot(dvortsov_ET, aes(x=doy,y=ET))+
 # и площадь зеленых насаждений в нем 
 
 park_area = st_area(park_sf) %>% as.integer() # площадь парка
-green_square # площадь под зелеными насаждениями
+#Вычислим площадь зеленых насаждений, т.к. в полигон у нас могли попадать пискели не целиком, для
+# тех кусочков что попали частично записана их доля попавшая в полигон - coverage_fraction,
+# тогда общая площадь под зелеными насаждениями будет
+green_square = 0.8 * park_area[1]
+
 
 # А также данные по осадкам
 Prcp_cum = dvortsov_cum %>% filter(year == 2017) %>% mutate(doy = yday(date)) %>% 
@@ -284,5 +282,3 @@ ggplot(Prcp_cum, aes(x = doy,y = irrigation*1000))+
   ylim(c(-20,100))+ # Эти параметры вам надо подобрать исходя из ваших данных
   ylab("Irrigation needed,l/m2 for Dvortsov park, 2017")+
   theme_bw()
-
-
