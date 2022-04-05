@@ -12,9 +12,11 @@ library(RStoolbox)
 library(RCurl)
 library(MODISTools)
 library(exactextractr)
+library(stringr)
+library(tidyverse)
 options(timeout = 4000000) 
 
-station_data = read.csv(str_interp("${getwd()}/station_data.csv"))
+station_data = read.csv(str_glue("{getwd()}/station_data.csv"))
 
 #После получения всписка всех станций, получите список станций ближайших к столице вашего региона,создав таблицу с именем региона и координатами его столицы
 dvortsov = data.frame(id="Dvorts",
@@ -54,7 +56,7 @@ dvortsov_cum %>% summarise(prcp_avg = max(prcp_cum), n = n())
 
 
 # Загрузите kml файл с полигоном вашего парка из любых онлайн карт
-park_sf2 <- read_sf(str_interp('${getwd()}/shapes/dvortsov.geojson'))
+park_sf2 <- read_sf(str_glue('{getwd()}/shapes/dvortsov.geojson'))
 # Сконевртируем объект в sp и загрузим для ншаей местности ЦМР из пакета elevatr
 types <- vapply(sf::st_geometry(park_sf2), function(x) {
   class(x)[2]
@@ -130,8 +132,8 @@ search_result_download(search_result[6,])
 # Т.к. мы скачали исходные данные с матрицы спутника, нам надо получить
 # обработать метаданные с параметрами датчиков и характеристика пролета спутника
 # для этого используем функции из пакета RStoolbox
-ls8t = readMeta(str_interp("${getwd()}/landsat/LC81860182017136LGN00/LC08_L1TP_186018_20170516_20170525_01_T1_MTL.txt"))
-lsst = stackMeta(str_interp("${getwd()}/landsat/LC81860182017136LGN00/LC08_L1TP_186018_20170516_20170525_01_T1_MTL.txt"))
+ls8t = readMeta(str_glue("{getwd()}/landsat/LC81860182017136LGN00/LC08_L1TP_186018_20170516_20170525_01_T1_MTL.txt"))
+lsst = stackMeta(str_glue("{getwd()}/landsat/LC81860182017136LGN00/LC08_L1TP_186018_20170516_20170525_01_T1_MTL.txt"))
 
 ls8t_cor = radCor(lsst, 
                   metaData = ls8t, 
@@ -282,3 +284,149 @@ ggplot(Prcp_cum, aes(x = doy,y = irrigation*1000))+
   ylim(c(-20,100))+ # Эти параметры вам надо подобрать исходя из ваших данных
   ylab("Irrigation needed,l/m2 for Dvortsov park, 2017")+
   theme_bw()
+
+
+
+# Пакеты
+library(tidyverse)
+library(sf)
+sf::sf_use_s2(FALSE)
+library(osmdata)
+library(ggmap)
+library(leaflet)
+library(RColorBrewer)
+library(gt)
+# Загрузим полигон с границами парка
+
+park_sf = read_sf(str_glue('{getwd()}/Shapes/park2.geojson'))
+plot(park_sf)
+
+# Предварительный этап
+get_overpass_url()
+
+overpass_url = "https://maps.mail.ru/osm/tools/overpass/api/interpreter"
+set_overpass_url(overpass_url)
+
+bbox = st_bbox(park_sf$geometry) %>% matrix(ncol=2,nrow=2)
+
+mad_map <- get_map(bbox, zoom = 13, source = "stamen")
+plot(mad_map)
+
+# 
+bbox = st_bbox(park_sf$geometry) %>% matrix(ncol=2,nrow=2)
+colnames(bbox) = c("min", "max")
+rownames(bbox) = c("x", "y")
+
+dvortsov_all = bbox %>% opq(timeout = 900) %>% add_osm_feature(key = "natural", value = available_tags("natural")) %>% osmdata_sf()
+
+ggplot() + geom_sf(data = dvortsov_all$osm_polygons, aes()) + geom_sf(data = dvortsov_all$osm_multipolygons, aes(fill=natural)) + theme_bw()
+
+# Подготовка данных OSM  к анализу
+map_polygons = st_read(str_glue('{getwd()}/Shapes/map.osm'), layer = 'multipolygons', quiet = TRUE)
+
+map_lines = st_read(str_glue('{getwd()}/Shapes/map.osm'), layer = 'lines', quiet = TRUE)
+
+map_polygons = map_polygons %>% filter(!is.na(natural) | !is.na(building))
+
+map_lines = map_lines %>% filter(highway == "footway")
+
+map_polygons = st_intersection(map_polygons, park_sf)
+
+map_lines = st_intersection(map_lines, park_sf)
+
+map_polygons$geometry = map_polygons$geometry %>% s2::s2_rebuild() %>% sf::st_as_sfc()
+
+map_lines$geometry = map_lines$geometry %>% s2::s2_rebuild() %>% sf::st_as_sfc()
+
+map_polygons = map_polygons %>% st_collection_extract(type="POLYGON")
+
+map_polygons$natural[!is.na(map_polygons$building)] = "yards"
+
+map_polygons$natural = as.factor(map_polygons$natural)
+
+levels(map_polygons$natural) = c("Древесные насаждения", "Травянное покрытие", "", "Водные объекты", "Водные объекты", "Лес", "Строения")
+
+map_lines$highway = as.factor(map_lines$highway)
+
+levels(map_lines$highway) = c("асфальт")
+
+ggplot()+
+  geom_sf(map_polygons,
+          map=aes(fill=natural))+
+  geom_sf(map_polygons,
+          map=aes(fill=building))+
+  geom_sf(map_lines,
+          map=aes(color=highway))+
+  theme_bw()
+
+leaflet() %>% addProviderTiles("OpenTopoMap") %>% 
+  addPolygons(data = park_sf$geometry %>% s2::s2_rebuild() %>%
+                sf::st_as_sfc(),  color = "black") %>%
+  addPolygons(data = map_polygons, fillColor = "grey", color = "grey") %>% addPolylines(data = map_lines, color = "red")
+# Error in to_ring.default(x) : 
+# Don't know how to get polygon data from object of class XY,POINT,sfg
+
+ggmap(mad_map)+
+  geom_sf(data = map_polygons,
+          map=aes(fill=natural), inherit.aes = FALSE )+
+  geom_sf(data = map_lines,
+          map=aes(color=highway), inherit.aes = FALSE)+
+  xlab("Широта, °")+
+  ylab("Долгота, °")+
+  guides(fill = guide_legend(title="Легенда"),
+         color =guide_legend(title = "Дороги") )+
+  theme_bw()+ 
+  theme(legend.position = "bottom")+
+  scale_fill_brewer(palette="Set3")
+
+area = st_area(park_sf)
+wood_area = sum(st_area(map_polygons %>% filter(natural=="Древесные насаждения")))
+water_area = st_area(map_polygons %>% filter(natural=="Водные объекты"))
+building_area = sum(st_area(map_polygons %>% filter(!is.na(building))))
+footway_length = st_length(map_lines)
+footway_area = sum(footway_length*2)
+
+# Рассчет запечатанности
+summary_ha = tibble(
+  water = round(as.numeric(water_area )/10000, 2),
+  wood = round(as.double(wood_area)/10000, 2),
+  build = round(as.double(building_area)/10000, 2),
+  road = round(as.double(footway_area)/10000, 2),
+  grass = round(as.numeric(area)/10000, 2) - water - wood - build -road,
+  area = round(as.numeric(area)/10000, 2),
+  name = "Площадь, га"
+)
+
+summary_perc = summary_ha %>% mutate(
+  water = water / area * 100,
+  wood = wood/ area * 100,
+  build = build / area * 100,
+  road = road / area * 100,
+  grass = grass/area*100,
+  area =  100,
+  name = "Доля, %"
+)
+summary_final = summary_ha %>% mutate(
+  area = (build+road)/(area-water)*100,
+  water = NA,
+  wood = NA,
+  build = NA,
+  road = NA,
+  grass = NA,
+  name = "Итого запечатано %"
+)
+summary_table = rbind(summary_ha,summary_perc, summary_final) 
+summary_table = summary_table %>% select(name,water,road,wood,build,grass,area)
+
+sum_tabl = summary_table %>% gt(rowname_col = "name") %>% tab_header(
+  title = "Сводная таблица типов ландшафта парка «Дворцовый»",
+  subtitle = "Площади, доли и степень запечатанности"
+) %>% cols_label(
+  water = "Водные объекты",
+  area = "Итого",
+  road = "Дорожное покрытие",
+  wood  = "Древесные насаждения",
+  build = "Строения",
+  grass = "Газон"
+) %>%  fmt_number(columns = everything()) %>%
+  fmt_missing(columns = everything())
